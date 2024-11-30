@@ -1,0 +1,101 @@
+To convert the Cypher query for use with **Apache AGE** (a graph extension for PostgreSQL), you'll need to make some adjustments. Apache AGE uses the SQL syntax with a special extension for graph queries that is similar to Cypher but follows SQL conventions.
+
+Here's the equivalent query for Apache AGE:
+
+```sql
+-- Set the graph
+SELECT set_graph('your_graph_name');
+
+-- Q1. Transitive friends with a certain name
+-- Input parameters: personId, firstName
+SELECT 
+    friend.id AS friendId,
+    friend.last_name AS friendLastName,
+    distance AS distanceFromPerson,
+    friend.birthday AS friendBirthday,
+    friend.creation_date AS friendCreationDate,
+    friend.gender AS friendGender,
+    friend.browser_used AS friendBrowserUsed,
+    friend.location_ip AS friendLocationIp,
+    friend.email AS friendEmails,
+    friend.speaks AS friendLanguages,
+    friend_city.name AS friendCityName,
+    unis AS friendUniversities,
+    companies AS friendCompanies
+FROM 
+    -- Match the person and their friends based on name and id
+    vertex AS p, vertex AS friend
+    -- Match the transitive paths of friendship (within 1 to 3 hops)
+    MATCH (p)-[:KNOWS*1..3]-(friend)
+    WHERE p.id = $personId AND friend.first_name = $firstName
+    AND NOT p = friend
+    
+    -- Calculate the distance (shortest path length)
+    WITH p, friend, min(length(path)) AS distance
+    
+    -- Order by distance, then by last name, and by ID
+    ORDER BY distance, friend.last_name, CAST(friend.id AS INTEGER)
+    LIMIT 20
+
+    -- Collect additional information related to the friend's city, universities, and companies
+    OPTIONAL MATCH (friend)-[:IS_LOCATED_IN]->(friend_city:City)
+    OPTIONAL MATCH (friend)-[studyAt:STUDY_AT]->(uni:University)-[:IS_LOCATED_IN]->(uniCity:City)
+    WITH 
+        friend, 
+        friend_city, 
+        distance, 
+        collect(CASE 
+            WHEN uni.name IS NULL THEN NULL
+            ELSE ARRAY[uni.name, studyAt.class_year, uniCity.name]
+            END) AS unis
+    
+    OPTIONAL MATCH (friend)-[workAt:WORK_AT]->(company:Company)-[:IS_LOCATED_IN]->(company_country:Country)
+    WITH 
+        friend, 
+        friend_city, 
+        distance, 
+        unis, 
+        collect(CASE 
+            WHEN company.name IS NULL THEN NULL
+            ELSE ARRAY[company.name, workAt.work_from, company_country.name]
+            END) AS companies
+    
+    -- Return the final results
+    RETURN 
+        friend.id, 
+        friend.last_name, 
+        distance, 
+        friend.birthday, 
+        friend.creation_date, 
+        friend.gender, 
+        friend.browser_used, 
+        friend.location_ip, 
+        friend.email, 
+        friend.speaks, 
+        friend_city.name, 
+        unis, 
+        companies
+ORDER BY 
+    distance ASC, 
+    friend.last_name ASC, 
+    CAST(friend.id AS INTEGER) ASC
+LIMIT 20;
+```
+
+### Key Differences and Considerations:
+1. **Graph Set Context**: In Apache AGE, the first query needs to specify the graph being queried. The `SELECT set_graph('your_graph_name');` is used to set the graph context.
+
+2. **Graph Traversals**: Apache AGE uses SQL `MATCH` with a graph-specific syntax for pattern matching, similar to Cypher, but with `vertex` and `edge` objects. You will need to ensure that you're working with the correct graph context and schema in AGE.
+
+3. **Path Length Calculation**: AGE supports `KNOWS*1..3` for variable-length paths, just like Cypher. However, for calculating the shortest path, you might need to adapt it to your specific use case, since AGE does not directly support `shortestPath()` in the same way. If you're just after finding paths of a specific length (1 to 3 hops), this would work.
+
+4. **CASE and Arrays**: AGE uses SQL syntax, so `CASE` expressions can be used to handle conditional logic. Arrays are returned using `ARRAY[...]`, which can be collected in the `WITH` clause.
+
+5. **Ordering and Limits**: The `ORDER BY` clause and `LIMIT` work the same way in SQL as they do in Cypher, but with SQL-specific syntax.
+
+### Adjustments You Might Need:
+- **Graph Schema**: Ensure that the vertex labels (`Person`, `City`, `University`, `Company`) and relationship types (`KNOWS`, `IS_LOCATED_IN`, `STUDY_AT`, `WORK_AT`) are correctly mapped in your Apache AGE graph.
+- **Graph Initialization**: Ensure that the graph is properly initialized in your PostgreSQL database with the appropriate schema.
+- **Path Length Calculation**: Apache AGE may require additional handling for path lengths or optimization for shortest path queries, depending on your setup.
+
+This query assumes that your graph contains the necessary relationships and vertex labels as mentioned in your Cypher query.
